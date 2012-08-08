@@ -9,18 +9,10 @@
 #import <OpenGL/CGLMacro.h>
 
 #import "v002_Screen_CapturePlugIn.h"
+#import "v002IOSurfaceImageProvider.h"
 
 #define	kQCPlugIn_Name				@"v002 Screen Capture 2.0"
 #define	kQCPlugIn_Description		@"10.8 Only Screen Capture, based off of CGDisplayStream"
-
-static  void MyTextureRelease(CGLContextObj cgl_ctx, GLuint name, void* context)
-{
-    glDeleteTextures(1, &name);
-    
-    IOSurfaceRef frameSurface = (IOSurfaceRef) context;
-    IOSurfaceDecrementUseCount(frameSurface);
-    CFRelease(frameSurface);
-}
 
 @interface v002_Screen_CapturePlugIn (Private)
 - (IOSurfaceRef)copyNewFrame;
@@ -161,9 +153,7 @@ static  void MyTextureRelease(CGLContextObj cgl_ctx, GLuint name, void* context)
 }
 
 - (BOOL)execute:(id <QCPlugInContext>)context atTime:(NSTimeInterval)time withArguments:(NSDictionary *)arguments
-{
-    CGLContextObj cgl_ctx = [context CGLContextObj];
-        
+{        
     if([self didValueForInputKeyChange:@"inputDisplayID"])
     {
         NSLog(@"new Display ID");
@@ -178,23 +168,17 @@ static  void MyTextureRelease(CGLContextObj cgl_ctx, GLuint name, void* context)
         
         // create a new CGDisplayStream
         CGDirectDisplayID display = (CGDirectDisplayID) self.inputDisplayID;
-		
-		// Get the backingScaleFactor, from the corresponding NSScreen object
-		CGFloat backingScaleFactor = 1.0;
-		for(NSScreen *screen in [NSScreen screens])
-		{
-			if([[screen.deviceDescription objectForKey:@"NSScreenNumber"] integerValue] == display)
-				backingScaleFactor = screen.backingScaleFactor;
-		}
-		
-		// Get bounds, and account for backingScaleFactor
-        CGRect bounds = CGDisplayBounds(display);
-		bounds.size.width *= backingScaleFactor;
-		bounds.size.height *= backingScaleFactor;
-		
+        
+        CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display);
+        
+        size_t pixelWidth = CGDisplayModeGetPixelWidth(mode);
+        size_t pixelHeight = CGDisplayModeGetPixelHeight(mode);
+        
+        CGDisplayModeRelease(mode);
+        
         displayStream = CGDisplayStreamCreateWithDispatchQueue(display,
-                                                               bounds.size.width,
-                                                               bounds.size.height,
+                                                               pixelWidth,
+                                                               pixelHeight,
                                                                'BGRA',
                                                                nil,
                                                                displayQueue,
@@ -216,35 +200,19 @@ static  void MyTextureRelease(CGLContextObj cgl_ctx, GLuint name, void* context)
     IOSurfaceRef frameSurface = [self copyNewFrame];
     if (frameSurface)
     {
-        size_t width = IOSurfaceGetWidth(frameSurface);
-        size_t height = IOSurfaceGetHeight(frameSurface);
-        
-        GLuint newTextureForSurface;
-        
-        glPushAttrib(GL_TEXTURE_BIT);
-        
-        glGenTextures(1, &newTextureForSurface);
-        glBindTexture(GL_TEXTURE_RECTANGLE_EXT,newTextureForSurface);
-        
-        CGLTexImageIOSurface2D(cgl_ctx, GL_TEXTURE_RECTANGLE_EXT, GL_RGBA, (GLsizei)width, (GLsizei)height, GL_BGRA, GL_UNSIGNED_BYTE, frameSurface, 0);
-        
-        glPopAttrib();
-        
-        // emit a new frame
         CGColorSpaceRef cspace = CGColorSpaceCreateWithName(kCGColorSpaceGenericRGB);
-        id<QCPlugInOutputImageProvider> provider = [context outputImageProviderFromTextureWithPixelFormat:QCPlugInPixelFormatBGRA8
-                                                               pixelsWide:width
-                                                               pixelsHigh:height
-                                                                     name:newTextureForSurface
-                                                                  flipped:YES
-                                                          releaseCallback:MyTextureRelease
-                                                           releaseContext:frameSurface
-                                                               colorSpace:cspace
-                                                         shouldColorMatch:YES];
+        
+        v002IOSurfaceImageProvider *output = [[v002IOSurfaceImageProvider alloc] initWithSurface:frameSurface isFlipped:YES colorSpace:cspace shouldColorMatch:YES];
+        
+        // v002IOSurfaceImageProvider has retained the surface and marked it as in use, so we can unmark it and release it now
+        CFRelease(frameSurface);
+        IOSurfaceDecrementUseCount(frameSurface);
         
         CGColorSpaceRelease(cspace);
 
-        self.outputImage = provider;
+        self.outputImage = output;
+        
+        [output release];
     }
     
     return YES;
