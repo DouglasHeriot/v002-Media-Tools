@@ -183,7 +183,7 @@ static  void MyTextureRelease(CGLContextObj cgl_ctx, GLuint name, void* context)
 		CGFloat backingScaleFactor = 1.0;
 		for(NSScreen *screen in [NSScreen screens])
 		{
-			if([screen.deviceDescription[@"NSScreenNumber"] integerValue] == display)
+			if([[screen.deviceDescription objectForKey:@"NSScreenNumber"] integerValue] == display)
 				backingScaleFactor = screen.backingScaleFactor;
 		}
 		
